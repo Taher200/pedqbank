@@ -1104,4 +1104,449 @@ function renderInfographs(head,c){
 igLoadUser();
 
 </script>
+<script>
+// ═══════════════════════════════════════════════════════
+//  UNIVERSAL QUESTION IMPORTER — upload questions in any format
+//  JSON, CSV, XLSX, DOCX, PDF, TXT/MD, pasted text. Images → Infographs.
+//  Saved in this browser (IndexedDB); progress persists via localStorage.
+// ═══════════════════════════════════════════════════════
+var UQ_OK=false, UQ_MEM=[], UQ_MEM_SEQ=-1, UQ_PENDING=[], UQ_PENDING_IMGS=[], UQ_BATCHES=[];
+
+function uqDB(){
+  return new Promise(function(res,rej){
+    try{
+      if(!window.indexedDB){rej(new Error('no idb'));return;}
+      var r=indexedDB.open('pedqbank_userqs',1);
+      r.onupgradeneeded=function(e){e.target.result.createObjectStore('batches',{keyPath:'id',autoIncrement:true});};
+      r.onsuccess=function(){res(r.result);};
+      r.onerror=function(){rej(r.error);};
+    }catch(e){rej(e);}
+  });
+}
+function uqGetAll(){
+  return uqDB().then(function(db){
+    return new Promise(function(res,rej){
+      var q=db.transaction('batches','readonly').objectStore('batches').getAll();
+      q.onsuccess=function(){res(q.result||[]);}; q.onerror=function(){rej(q.error);};
+    });
+  }).then(function(b){UQ_OK=true;return b.concat(UQ_MEM);}).catch(function(){UQ_OK=false;return UQ_MEM.slice();});
+}
+function uqAddBatch(batch){
+  if(!UQ_OK){batch.id=UQ_MEM_SEQ--;UQ_MEM.push(batch);return Promise.resolve(batch.id);}
+  return uqDB().then(function(db){
+    return new Promise(function(res,rej){
+      var q=db.transaction('batches','readwrite').objectStore('batches').add(batch);
+      q.onsuccess=function(){res(q.result);}; q.onerror=function(){rej(q.error);};
+    });
+  });
+}
+function uqDelBatch(id){
+  if(id<0){UQ_MEM=UQ_MEM.filter(function(b){return b.id!==id;});return Promise.resolve();}
+  return uqDB().then(function(db){
+    return new Promise(function(res,rej){
+      var q=db.transaction('batches','readwrite').objectStore('batches').delete(id);
+      q.onsuccess=function(){res();}; q.onerror=function(){rej(q.error);};
+    });
+  });
+}
+
+// ---- merge imported questions into the live app ----
+function uqEnsureTopic(){
+  if(!TOPICS.find(function(t){return t[0]==='up';})){
+    TOPICS.push(['up','My Uploads',[]]);
+    SECTIONS.push(['My Uploads',['up']]);
+  }
+}
+function uqMerge(batches){
+  UQ_BATCHES=batches;
+  for(var i=Q.length-1;i>=0;i--){ if(Q[i]._b!==undefined) Q.splice(i,1); }
+  var existing={}; Q.forEach(function(q){existing[qid(q)]=1;});
+  batches.forEach(function(b){
+    (b.qs||[]).forEach(function(raw){
+      var q={t:raw.t,s:raw.s||'Imported',y:raw.y||undefined,q:raw.q,o:raw.o,a:raw.a,e:raw.e||'',r:raw.r||('Imported — '+(b.name||'upload'))};
+      if(!q.q||!q.o||q.o.length<2) return;
+      if(!TOPICS.find(function(t){return t[0]===q.t;})){ uqEnsureTopic(); q.t='up'; }
+      var sl=subList(q.t); if(sl.indexOf(q.s)<0) sl.push(q.s);
+      q._b=b.id;
+      var k=qid(q); if(existing[k]) return; existing[k]=1;
+      Q.push(q);
+    });
+  });
+  var ys=[]; Q.forEach(function(q){ if(q.y&&ys.indexOf(q.y)<0) ys.push(q.y); }); ys.sort(function(a,b){return b-a;});
+  years.length=0; ys.forEach(function(y){years.push(y);});
+  buildBar(); buildTOC(); render();
+}
+function uqReloadAll(){ return uqGetAll().then(uqMerge); }
+
+// ---- answer normalization ----
+function uqNormAnswer(ans,opts){
+  if(ans===undefined||ans===null||ans==='') return null;
+  if(typeof ans==='number'){ if(ans>=0&&ans<opts.length) return Math.floor(ans); if(ans>=1&&ans<=opts.length) return Math.floor(ans)-1; return null; }
+  var s=String(ans).trim();
+  var m=s.match(/^\(?([A-Ea-e])\)?[\.\)]?$/); if(m) { var i='ABCDE'.indexOf(m[1].toUpperCase()); return i<opts.length?i:null; }
+  if(/^\d+$/.test(s)){ var n=+s; if(n>=1&&n<=opts.length) return n-1; if(n===0) return 0; return null; }
+  var lo=s.toLowerCase(); for(var j=0;j<opts.length;j++){ if(String(opts[j]).trim().toLowerCase()===lo) return j; }
+  return null;
+}
+function uqTopicKey(v){
+  if(!v) return null; var s=String(v).trim();
+  var hit=TOPICS.find(function(t){return t[0]===s.toLowerCase();}); if(hit) return hit[0];
+  var lo=s.toLowerCase();
+  hit=TOPICS.find(function(t){return t[1].toLowerCase()===lo||t[1].toLowerCase().indexOf(lo)===0;});
+  return hit?hit[0]:null;
+}
+
+// ---- parsers ----
+function uqParseJSON(txt){
+  var d=JSON.parse(txt); var arr=Array.isArray(d)?d:(d.questions||d.qs||d.Q||[]);
+  var out=[];
+  arr.forEach(function(x){
+    var opts=x.o||x.options||x.choices||x.answers;
+    if(opts&&!Array.isArray(opts)&&typeof opts==='object'){ opts=['A','B','C','D','E'].map(function(k){return opts[k];}).filter(function(v){return v!==undefined;}); }
+    var stem=x.q||x.question||x.stem; if(!stem||!opts||opts.length<2) return;
+    var a=uqNormAnswer(x.a!==undefined?x.a:(x.answer!==undefined?x.answer:x.correct),opts);
+    out.push({t:uqTopicKey(x.t||x.topic),s:x.s||x.sub||x.subtopic||x.category,y:x.y||x.year,q:String(stem),o:opts.map(String),a:a===null?0:a,e:String(x.e||x.explanation||x.rationale||''),r:x.r||x.ref||x.reference||x.source,_noAns:a===null});
+  });
+  return out;
+}
+function uqParseCSVText(txt){
+  var rows=[],row=[],cur='',inQ=false;
+  for(var i=0;i<txt.length;i++){
+    var c=txt[i];
+    if(inQ){ if(c==='"'){ if(txt[i+1]==='"'){cur+='"';i++;} else inQ=false; } else cur+=c; }
+    else if(c==='"') inQ=true;
+    else if(c===','){row.push(cur);cur='';}
+    else if(c==='\n'||c==='\r'){ if(c==='\r'&&txt[i+1]==='\n')i++; row.push(cur);cur=''; if(row.some(function(x){return x.trim();}))rows.push(row); row=[]; }
+    else cur+=c;
+  }
+  row.push(cur); if(row.some(function(x){return x.trim();}))rows.push(row);
+  return uqRowsToQs(rows);
+}
+function uqRowsToQs(rows){
+  if(!rows.length) return [];
+  var hdr=rows[0].map(function(h){return String(h||'').trim().toLowerCase();});
+  var hasHdr=hdr.some(function(h){return /question|stem/.test(h);});
+  var qi,oi=[],ai=-1,ei=-1,ti=-1,si=-1,yi=-1,ri=-1;
+  if(hasHdr){
+    hdr.forEach(function(h,ix){
+      if(/^(q|question|stem)$/.test(h)||/question/.test(h)&&qi===undefined) { if(qi===undefined)qi=ix; return; }
+      var om=h.match(/^(?:option\s*|opt\s*|choice\s*)?([a-e])$/)||h.match(/^(?:option|opt|choice)\s*([1-5])$/);
+      if(om){ var k=/\d/.test(om[1])?+om[1]-1:'abcde'.indexOf(om[1]); oi[k]=ix; return; }
+      if(/^(ans|answer|correct|key)/.test(h)&&ai<0){ai=ix;return;}
+      if(/expl|rationale|reason/.test(h)&&ei<0){ei=ix;return;}
+      if(/^(t|topic|system|subject)$/.test(h)&&ti<0){ti=ix;return;}
+      if(/^(s|sub|subtopic|category)$/.test(h)&&si<0){si=ix;return;}
+      if(/^(y|year)$/.test(h)&&yi<0){yi=ix;return;}
+      if(/^(r|ref|reference|source)$/.test(h)&&ri<0){ri=ix;return;}
+    });
+    rows=rows.slice(1);
+  }
+  if(qi===undefined){ qi=0; oi=[1,2,3,4]; ai=5; ei=6; }
+  var out=[];
+  rows.forEach(function(r){
+    var stem=String(r[qi]||'').trim(); if(!stem) return;
+    var opts=oi.map(function(ix){return ix!==undefined?String(r[ix]||'').trim():'';}).filter(function(v){return v;});
+    if(opts.length<2) return;
+    var a=uqNormAnswer(ai>=0?r[ai]:null,opts);
+    out.push({t:ti>=0?uqTopicKey(r[ti]):null,s:si>=0?String(r[si]||'').trim():null,y:yi>=0&&r[yi]?+String(r[yi]).slice(0,4):undefined,q:stem,o:opts,a:a===null?0:a,e:ei>=0?String(r[ei]||'').trim():'',r:ri>=0?String(r[ri]||'').trim():undefined,_noAns:a===null});
+  });
+  return out;
+}
+function uqParseFreeText(txt){
+  var lines=txt.replace(/\r/g,'').split('\n');
+  var qs=[],cur=null,mode='q';
+  var optRe=/^\s*\(?([A-Ea-e])[\.\)\]:]\s+(.+)/;
+  var numRe=/^\s*(?:Q(?:uestion)?\s*)?(\d{1,3})\s*[\.\):]\s*(.*)/i;
+  var qRe=/^\s*Q(?:uestion)?\s*[:.]\s*(.*)/i;
+  var ansRe=/^\s*(?:correct\s+)?ans(?:wer)?\s*[:\-]?\s*\(?([A-Ea-e])\)?\s*[\.\):]?\s*(.*)/i;
+  var expRe=/^\s*(?:explanation|rationale|why)\s*[:\-]\s*(.*)/i;
+  function push(){ if(cur&&cur.o.length>=2&&cur.q.trim()){ if(cur.a===null){cur.a=0;cur._noAns=true;} cur.e=cur.e.trim(); qs.push(cur);} cur=null; }
+  lines.forEach(function(line){
+    var t=line.trim(),m;
+    if((m=t.match(numRe))||(m=t.match(qRe))){ push(); cur={q:(m[2]!==undefined?m[2]:m[1])||'',o:[],a:null,e:''}; mode='q'; return; }
+    if(!cur){ if(!t)return; cur={q:'',o:[],a:null,e:''}; mode='q'; }
+    if(m=t.match(optRe)){ var want='ABCDE'[cur.o.length]; if(m[1].toUpperCase()===want||cur.o.length===0&&m[1].toUpperCase()==='A'){ cur.o.push(m[2].trim()); mode='o'; return; } }
+    if(m=t.match(ansRe)){ var i='ABCDE'.indexOf(m[1].toUpperCase()); if(i>-1&&i<cur.o.length)cur.a=i; if(m[2])cur.e+=(cur.e?' ':'')+m[2]; mode='e'; return; }
+    if(m=t.match(expRe)){ cur.e+=(cur.e?' ':'')+(m[1]||''); mode='e'; return; }
+    if(!t){ return; }
+    if(mode==='q') cur.q+=(cur.q?' ':'')+t;
+    else if(mode==='o'&&cur.o.length) cur.o[cur.o.length-1]+=' '+t;
+    else cur.e+=(cur.e?' ':'')+t;
+  });
+  push();
+  return qs;
+}
+
+// ---- zip / docx / xlsx (self-contained, works offline) ----
+function uqInflateRaw(u8){
+  var ds=new DecompressionStream('deflate-raw');
+  return new Response(new Blob([u8]).stream().pipeThrough(ds)).arrayBuffer().then(function(b){return new Uint8Array(b);});
+}
+function uqUnzip(buf){
+  var u8=new Uint8Array(buf),dv=new DataView(buf);
+  var e=-1;
+  for(var i=u8.length-22;i>=Math.max(0,u8.length-22-65536);i--){ if(dv.getUint32(i,true)===0x06054b50){e=i;break;} }
+  if(e<0) return Promise.reject(new Error('Not a valid file (zip signature missing)'));
+  var cnt=dv.getUint16(e+10,true),off=dv.getUint32(e+16,true);
+  var out={},jobs=[],td=new TextDecoder();
+  for(var k=0;k<cnt;k++){
+    if(dv.getUint32(off,true)!==0x02014b50) break;
+    var method=dv.getUint16(off+10,true),csize=dv.getUint32(off+20,true);
+    var nlen=dv.getUint16(off+28,true),elen=dv.getUint16(off+30,true),clen=dv.getUint16(off+32,true);
+    var lho=dv.getUint32(off+42,true);
+    var name=td.decode(u8.subarray(off+46,off+46+nlen));
+    var lnlen=dv.getUint16(lho+26,true),lelen=dv.getUint16(lho+28,true);
+    var dstart=lho+30+lnlen+lelen;
+    var data=u8.subarray(dstart,dstart+csize);
+    if(method===0) out[name]=data;
+    else (function(nm,dd){ jobs.push(uqInflateRaw(dd).then(function(d){out[nm]=d;})); })(name,data);
+    off+=46+nlen+elen+clen;
+  }
+  return Promise.all(jobs).then(function(){return out;});
+}
+function uqXmlUnesc(s){return s.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,'&');}
+function uqDocxToText(buf){
+  return uqUnzip(buf).then(function(files){
+    var doc=files['word/document.xml']; if(!doc) throw new Error('Not a Word document');
+    var x=new TextDecoder().decode(doc);
+    x=x.replace(/<w:tab[^>]*\/>/g,'\t').replace(/<w:br[^>]*\/>/g,'\n').replace(/<\/w:p>/g,'\n');
+    x=x.replace(/<[^>]+>/g,'');
+    return uqXmlUnesc(x);
+  });
+}
+function uqColIdx(ref){ var n=0; for(var i=0;i<ref.length;i++){ n=n*26+(ref.charCodeAt(i)-64); } return n-1; }
+function uqXlsxToRows(buf){
+  return uqUnzip(buf).then(function(files){
+    var td=new TextDecoder(),shared=[];
+    if(files['xl/sharedStrings.xml']){
+      td.decode(files['xl/sharedStrings.xml']).split(/<si[ >]/).slice(1).forEach(function(si){
+        var ts=[],m,re=/<t[^>]*>([\s\S]*?)<\/t>/g;
+        while(m=re.exec(si)) ts.push(uqXmlUnesc(m[1]));
+        shared.push(ts.join(''));
+      });
+    }
+    var sheet=Object.keys(files).filter(function(n){return /^xl\/worksheets\/sheet\d+\.xml$/.test(n);}).sort()[0];
+    if(!sheet) throw new Error('No worksheet found');
+    var x=td.decode(files[sheet]),rows=[],rm,rre=/<row[^>]*>([\s\S]*?)<\/row>/g;
+    while(rm=rre.exec(x)){
+      var cells=[],cm,cre=/<c([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+      while(cm=cre.exec(rm[1])){
+        var attrs=cm[1],inner=cm[2]||'';
+        var refm=attrs.match(/r="([A-Z]+)\d+"/),col=refm?uqColIdx(refm[1]):cells.length;
+        var v='',vm=inner.match(/<v>([\s\S]*?)<\/v>/),tm=attrs.match(/t="(\w+)"/);
+        if(tm&&tm[1]==='s'&&vm) v=shared[+vm[1]]||'';
+        else if(tm&&tm[1]==='inlineStr'){var im=inner.match(/<t[^>]*>([\s\S]*?)<\/t>/); v=im?uqXmlUnesc(im[1]):'';}
+        else if(vm) v=uqXmlUnesc(vm[1]);
+        cells[col]=v;
+      }
+      var arr=[]; for(var i=0;i<cells.length;i++) arr.push(cells[i]==null?'':String(cells[i]));
+      rows.push(arr);
+    }
+    return rows;
+  });
+}
+function uqLoadLib(url){
+  return new Promise(function(res,rej){
+    var s=document.createElement('script'); s.src=url;
+    s.onload=res; s.onerror=function(){rej(new Error('offline'));};
+    document.head.appendChild(s);
+  });
+}
+function uqPdfToText(buf){
+  var p=window.pdfjsLib?Promise.resolve():uqLoadLib('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js').then(function(){
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  });
+  return p.then(function(){ return pdfjsLib.getDocument({data:buf}).promise; }).then(function(doc){
+    var chain=Promise.resolve(''),n=doc.numPages;
+    for(var pn=1;pn<=n;pn++){
+      (function(pageNo){
+        chain=chain.then(function(txt){
+          return doc.getPage(pageNo).then(function(pg){return pg.getTextContent();}).then(function(tc){
+            var lastY=null,line='',out='';
+            tc.items.forEach(function(it){
+              var y=Math.round(it.transform[5]);
+              if(lastY!==null&&Math.abs(y-lastY)>2){out+=line+'\n';line='';}
+              line+=it.str+' '; lastY=y;
+            });
+            return txt+out+line+'\n';
+          });
+        });
+      })(pn);
+    }
+    return chain;
+  }).catch(function(e){
+    throw new Error('PDF parsing needs an internet connection. If this keeps failing, send the PDF to Claude to convert, or paste the text.');
+  });
+}
+
+// ---- file router ----
+function uqParseFile(file){
+  var name=file.name.toLowerCase();
+  if(/\.(json)$/.test(name)) return file.text().then(uqParseJSON);
+  if(/\.(csv|tsv)$/.test(name)) return file.text().then(function(t){return uqParseCSVText(/\.tsv$/.test(name)?t.replace(/\t/g,','):t);});
+  if(/\.(txt|md)$/.test(name)) return file.text().then(uqParseFreeText);
+  if(/\.docx$/.test(name)) return file.arrayBuffer().then(uqDocxToText).then(uqParseFreeText);
+  if(/\.xlsx$/.test(name)) return file.arrayBuffer().then(uqXlsxToRows).then(uqRowsToQs);
+  if(/\.pdf$/.test(name)) return file.arrayBuffer().then(uqPdfToText).then(uqParseFreeText);
+  return file.text().then(function(t){ try{return uqParseJSON(t);}catch(e){return uqParseFreeText(t);} });
+}
+
+// ---- UI ----
+var uqFiles=[];
+function uqOpen(){
+  UQ_PENDING=[]; UQ_PENDING_IMGS=[]; uqFiles=[];
+  var m=document.getElementById('uq-modal');
+  if(!m){ m=document.createElement('div'); m.id='uq-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(10,20,17,.55);display:flex;align-items:center;justify-content:center;z-index:9998;padding:18px';
+    document.body.appendChild(m); }
+  m.style.display='flex';
+  m.onclick=uqClose;
+  var topicOpts='<option value="up">My Uploads (default)</option>'+TOPICS.filter(function(t){return t[0]!=='up';}).map(function(t){return '<option value="'+t[0]+'">'+esc(t[1])+'</option>';}).join('');
+  m.innerHTML='<div style="background:var(--card,#fff);color:var(--ink,#16241f);border-radius:14px;max-width:640px;width:100%;max-height:92vh;overflow:auto;padding:22px 24px;box-shadow:0 18px 60px rgba(0,0,0,.35)" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><b style="font-size:1.1em">⬆ Upload questions &amp; infographics</b><button onclick="uqClose()" style="background:none;border:0;font-size:1.4em;cursor:pointer;color:inherit;line-height:1">✕</button></div>'
+    +'<div id="uq-step1">'
+    +'<label id="uq-drop" style="display:block;border:2px dashed var(--accent,#0f6e63);border-radius:12px;padding:20px;text-align:center;cursor:pointer;margin-bottom:10px">'
+      +'<div style="font-weight:600">Click to choose files — or drag &amp; drop</div>'
+      +'<div style="font-size:.78em;opacity:.7;margin-top:5px">Questions: JSON · CSV · XLSX · DOCX · PDF · TXT/MD &nbsp;·&nbsp; Images → Infographs tab</div>'
+      +'<div id="uq-filelbl" style="font-size:.8em;opacity:.75;margin-top:6px">No files selected yet</div>'
+      +'<input id="uq-file" type="file" multiple accept=".json,.csv,.tsv,.txt,.md,.docx,.pdf,.xlsx,image/*" style="display:none" onchange="uqFilesPicked(this)">'
+    +'</label>'
+    +'<div style="font-size:.8em;font-weight:600;margin:10px 0 4px;opacity:.8">…or paste questions as text</div>'
+    +'<textarea id="uq-paste" rows="5" placeholder="1. Question stem…&#10;A. Option one&#10;B. Option two&#10;C. Option three&#10;Answer: B&#10;Explanation: …" style="width:100%;font:inherit;font-size:.82em;padding:9px 11px;border:1px solid var(--line,#ccc);border-radius:9px;box-sizing:border-box;background:transparent;color:inherit"></textarea>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;align-items:center">'
+      +'<label style="font-size:.8em;font-weight:600">Topic <select id="uq-topic" style="font:inherit;font-size:.85em;padding:5px 8px;border:1px solid var(--line,#ccc);border-radius:8px;background:var(--card,#fff);color:inherit">'+topicOpts+'</select></label>'
+      +'<label style="font-size:.8em;font-weight:600">Subtopic <input id="uq-sub" type="text" value="Imported" style="font:inherit;font-size:.85em;padding:5px 8px;border:1px solid var(--line,#ccc);border-radius:8px;width:130px;background:transparent;color:inherit"></label>'
+      +'<span style="font-size:.72em;opacity:.6">used when the file doesn’t specify its own</span>'
+    +'</div>'
+    +'<details style="font-size:.75em;opacity:.8;margin-bottom:12px"><summary style="cursor:pointer">Accepted formats &amp; tips</summary><div style="padding:8px 4px;line-height:1.6">'
+      +'<b>Text / DOCX / PDF / paste:</b> numbered questions with A./B./C. options, then “Answer: B” and optional “Explanation: …”.<br>'
+      +'<b>CSV / XLSX:</b> header row with columns like <i>question, A, B, C, D, answer, explanation, topic, subtopic, year</i>.<br>'
+      +'<b>JSON:</b> the app’s native format — <code>[{"t","s","y","q","o":[..],"a":0,"e"}]</code> (what Claude generates for you).<br>'
+      +'<b>Images</b> (PNG/JPG) are added to the Infographs tab with the topic chosen above.<br>'
+      +'Complex files not parsing well? Send them to Claude in chat — I’ll convert and bake them in permanently.'
+    +'</div></details>'
+    +'<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center">'
+      +'<span id="uq-note" style="font-size:.75em;opacity:.65;margin-right:auto">'+(UQ_OK||!window.indexedDB?'Saved in this browser — here on every visit.':'Saved in this browser — here on every visit.')+'</span>'
+      +'<button onclick="uqClose()" style="font:inherit;font-size:.85em;padding:8px 16px;border:1px solid var(--line,#ccc);border-radius:9px;background:transparent;color:inherit;cursor:pointer">Cancel</button>'
+      +'<button id="uq-parsebtn" onclick="uqPreview()" style="font:inherit;font-size:.85em;font-weight:700;padding:8px 18px;border:0;border-radius:9px;background:var(--accent,#0f6e63);color:#fff;cursor:pointer">Preview →</button>'
+    +'</div>'
+    +'<div id="uq-batches" style="margin-top:16px;border-top:1px solid var(--line,#ccc);padding-top:10px"></div>'
+    +'</div>'
+    +'<div id="uq-step2" style="display:none"></div>';
+  var drop=document.getElementById('uq-drop');
+  drop.addEventListener('dragover',function(e){e.preventDefault();drop.style.background='rgba(15,110,99,.07)';});
+  drop.addEventListener('dragleave',function(){drop.style.background='';});
+  drop.addEventListener('drop',function(e){e.preventDefault();drop.style.background='';var inp=document.getElementById('uq-file');inp.files=e.dataTransfer.files;uqFilesPicked(inp);});
+  uqRenderBatches();
+}
+function uqClose(){var m=document.getElementById('uq-modal');if(m)m.style.display='none';}
+function uqFilesPicked(input){
+  uqFiles=Array.prototype.slice.call(input.files||[]);
+  var lbl=document.getElementById('uq-filelbl');
+  lbl.textContent=uqFiles.length?uqFiles.map(function(f){return f.name;}).join(', '):'No files selected yet';
+}
+function uqRenderBatches(){
+  var el=document.getElementById('uq-batches'); if(!el)return;
+  if(!UQ_BATCHES.length){ el.innerHTML='<div style="font-size:.75em;opacity:.55">No imported question sets yet.</div>'; return; }
+  el.innerHTML='<div style="font-size:.8em;font-weight:600;margin-bottom:6px">Your imported sets</div>'+UQ_BATCHES.map(function(b){
+    return '<div style="display:flex;align-items:center;gap:8px;font-size:.8em;padding:4px 0"><span style="flex:1">'+esc(b.name||'Import')+' — '+(b.qs||[]).length+' questions'+(b.added?' · '+esc(b.added):'')+'</span><button onclick="uqDelAsk(this,'+b.id+')" style="font:inherit;font-size:.78em;border:1px solid var(--line,#ccc);border-radius:7px;padding:2px 10px;background:transparent;color:inherit;cursor:pointer">✕</button></div>';
+  }).join('');
+}
+function uqDelAsk(btn,id){
+  if(btn.dataset.armed){ uqDelBatch(id).then(uqReloadAll).then(function(){uqRenderBatches();}); }
+  else{ btn.dataset.armed='1'; btn.textContent='Delete?'; btn.style.background='#b3261e'; btn.style.color='#fff';
+    setTimeout(function(){ if(btn&&btn.dataset){delete btn.dataset.armed;btn.textContent='✕';btn.style.background='';btn.style.color='';} },2500); }
+}
+function uqPreview(){
+  var btn=document.getElementById('uq-parsebtn'); btn.disabled=true; btn.textContent='Parsing…';
+  var topic=document.getElementById('uq-topic').value, sub=document.getElementById('uq-sub').value.trim()||'Imported';
+  var paste=document.getElementById('uq-paste').value.trim();
+  var imgFiles=uqFiles.filter(function(f){return /^image\//.test(f.type);});
+  var docFiles=uqFiles.filter(function(f){return !/^image\//.test(f.type);});
+  var jobs=docFiles.map(function(f){
+    return uqParseFile(f).then(function(qs){return {name:f.name,qs:qs};}).catch(function(e){return {name:f.name,err:e.message||String(e)};});
+  });
+  if(paste) jobs.push(Promise.resolve({name:'Pasted text',qs:uqParseFreeText(paste)}));
+  Promise.all(jobs).then(function(results){
+    UQ_PENDING=[]; var errs=[];
+    results.forEach(function(r){
+      if(r.err){errs.push(r.name+': '+r.err);return;}
+      (r.qs||[]).forEach(function(q){ q._src=r.name; if(!q.t)q.t=topic; if(!q.s)q.s=sub; UQ_PENDING.push(q); });
+    });
+    UQ_PENDING_IMGS=imgFiles;
+    uqShowPreview(errs,topic);
+  }).finally(function(){ btn.disabled=false; btn.textContent='Preview →'; });
+}
+function uqShowPreview(errs,topic){
+  var s2=document.getElementById('uq-step2');
+  document.getElementById('uq-step1').style.display='none'; s2.style.display='block';
+  var noAns=UQ_PENDING.filter(function(q){return q._noAns;}).length;
+  var html='<div style="font-weight:700;margin-bottom:8px">Preview: '+UQ_PENDING.length+' question'+(UQ_PENDING.length!==1?'s':'')+(UQ_PENDING_IMGS.length?' + '+UQ_PENDING_IMGS.length+' infographic'+(UQ_PENDING_IMGS.length>1?'s':''):'')+'</div>';
+  if(errs.length) html+='<div style="background:rgba(179,38,30,.08);border:1px solid rgba(179,38,30,.3);border-radius:9px;padding:8px 12px;font-size:.78em;margin-bottom:10px">⚠ '+errs.map(esc).join('<br>⚠ ')+'</div>';
+  if(noAns) html+='<div style="background:rgba(185,116,10,.08);border:1px solid rgba(185,116,10,.3);border-radius:9px;padding:8px 12px;font-size:.78em;margin-bottom:10px">⚠ '+noAns+' question'+(noAns>1?'s have':' has')+' no detected answer — defaulted to A. Tap a question below to fix the answer before saving.</div>';
+  html+='<div style="max-height:44vh;overflow:auto;border:1px solid var(--line,#ccc);border-radius:10px;padding:6px 10px;margin-bottom:12px">';
+  UQ_PENDING.forEach(function(q,i){
+    html+='<details style="border-bottom:1px solid var(--line,#eee);padding:6px 0;font-size:.8em"'+(q._noAns?' open':'')+'>'
+      +'<summary style="cursor:pointer;display:flex;gap:8px;align-items:baseline"><b style="flex-shrink:0">'+(i+1)+'.</b><span style="flex:1">'+esc(q.q.slice(0,110))+(q.q.length>110?'…':'')+'</span>'
+      +'<span style="font-size:.85em;opacity:.6;flex-shrink:0">'+q.o.length+' opts · ans '+('ABCDE'[q.a]||'?')+(q._noAns?' ⚠':'')+'</span>'
+      +'<button onclick="event.preventDefault();uqDrop(' +i+ ')" title="Remove" style="border:0;background:none;cursor:pointer;color:#b3261e;font-size:1em;flex-shrink:0">✕</button></summary>'
+      +'<div style="padding:4px 0 4px 20px">'+q.o.map(function(o,oi2){return '<label style="display:block;padding:1px 0;cursor:pointer"><input type="radio" name="uqa'+i+'" '+(q.a===oi2?'checked':'')+' onchange="UQ_PENDING['+i+'].a='+oi2+';UQ_PENDING['+i+']._noAns=false"> <b>'+('ABCDE'[oi2])+'.</b> '+esc(o)+'</label>';}).join('')
+      +(q.e?'<div style="opacity:.7;margin-top:3px"><b>Expl:</b> '+esc(q.e.slice(0,160))+(q.e.length>160?'…':'')+'</div>':'')+'</div></details>';
+  });
+  html+='</div>';
+  if(!UQ_PENDING.length&&!UQ_PENDING_IMGS.length) html+='<div style="font-size:.85em;opacity:.7;margin-bottom:12px">Nothing could be parsed. Check the format tips, or send the file to Claude to convert.</div>';
+  html+='<div style="display:flex;gap:10px;justify-content:flex-end">'
+    +'<button onclick="uqBack()" style="font:inherit;font-size:.85em;padding:8px 16px;border:1px solid var(--line,#ccc);border-radius:9px;background:transparent;color:inherit;cursor:pointer">← Back</button>'
+    +((UQ_PENDING.length||UQ_PENDING_IMGS.length)?'<button id="uq-savebtn" onclick="uqSave(\''+topic+'\')" style="font:inherit;font-size:.85em;font-weight:700;padding:8px 18px;border:0;border-radius:9px;background:var(--accent,#0f6e63);color:#fff;cursor:pointer">Add to app</button>':'')
+    +'</div>';
+  s2.innerHTML=html;
+}
+function uqDrop(i){ UQ_PENDING.splice(i,1); uqShowPreview([],document.getElementById('uq-topic')?document.getElementById('uq-topic').value:'up'); }
+function uqBack(){ document.getElementById('uq-step2').style.display='none'; document.getElementById('uq-step1').style.display='block'; }
+function uqSave(topic){
+  var btn=document.getElementById('uq-savebtn'); if(btn){btn.disabled=true;btn.textContent='Adding…';}
+  var jobs=[];
+  if(UQ_PENDING.length){
+    var names={}; UQ_PENDING.forEach(function(q){names[q._src||'Import']=1;});
+    var qs=UQ_PENDING.map(function(q){return {t:q.t,s:q.s,y:q.y,q:q.q,o:q.o,a:q.a,e:q.e,r:q.r};});
+    jobs.push(uqAddBatch({name:Object.keys(names).join(', '),added:new Date().toISOString().slice(0,10),qs:qs}));
+  }
+  var tnames={}; TOPICS.forEach(function(t){tnames[t[0]]=t[1];});
+  UQ_PENDING_IMGS.forEach(function(f){
+    jobs.push(igFileToSrc(f).then(function(srcData){
+      return igSaveUser({title:f.name.replace(/\.[^.]+$/,'').replace(/[-_]+/g,' '),topics:topic&&topic!=='up'?[topic]:[],tags:topic&&topic!=='up'?[tnames[topic]]:['My uploads'],src:srcData,added:new Date().toISOString().slice(0,10)});
+    }));
+  });
+  Promise.all(jobs).then(function(){
+    return Promise.all([uqReloadAll(), typeof igLoadUser==='function'?igLoadUser():null]);
+  }).then(function(){
+    uqClose();
+  }).catch(function(e){
+    if(btn){btn.disabled=false;btn.textContent='Add to app';}
+    alert2('Could not save: '+(e&&e.message?e.message:e));
+  });
+}
+function alert2(msg){ var s2=document.getElementById('uq-step2'); if(s2){ s2.insertAdjacentHTML('afterbegin','<div style="background:rgba(179,38,30,.1);border-radius:8px;padding:8px 12px;font-size:.8em;margin-bottom:8px">'+esc(msg)+'</div>'); } }
+
+// ---- progress persistence (answers survive reload) ----
+function uqPersist(){ try{localStorage.setItem('pq_answers',JSON.stringify(state.answered));}catch(e){} }
+(function(){
+  try{ var sv=localStorage.getItem('pq_answers'); if(sv){ state.answered=JSON.parse(sv)||{}; } }catch(e){}
+  var _ca=chooseAnswer; chooseAnswer=function(q,oi){ _ca(q,oi); uqPersist(); };
+  var _pk=peek; peek=function(btn){ _pk(btn); uqPersist(); };
+  var _rp=resetProgress; resetProgress=function(){ _rp(); uqPersist(); };
+  // topbar Upload button
+  var fb=document.getElementById('filtBtn');
+  if(fb){
+    var b=document.createElement('button');
+    b.className='btn'; b.id='uqBtn'; b.textContent='⬆ Upload'; b.title='Upload questions (any format) & infographics';
+    b.style.cssText='background:var(--accent,#0f6e63);color:#fff;font-weight:700';
+    b.onclick=uqOpen;
+    fb.parentNode.insertBefore(b,fb);
+  }
+  buildTOC(); render();
+  uqReloadAll();
+})();
+
+</script>
 </body></html>
