@@ -348,6 +348,18 @@ table.cmp tbody tr:nth-child(even) td{background:#fafbfe}
   .wrap{padding:12px 13px 0}
   .head{margin:2px 0 10px}
 }
+/* ---- mobile nav cleanup: mode tabs get their own scrollable row instead of
+   being squeezed to fit, and the home button drops its label to save space ---- */
+@media (max-width:860px){
+  #sbBtn,#homeBtn,#filtBtn{order:0}
+  .bar .seg{order:1;flex:1 1 100%;min-width:0;display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
+  .bar .seg::-webkit-scrollbar{display:none}
+  .bar .seg button{flex:0 0 auto;text-align:center;padding:9px 15px;font-size:13px;white-space:nowrap}
+  #homeBtn .hb-label{display:none}
+}
+@media (max-width:430px){
+  .bar .seg button{padding:8px 12px;font-size:12.5px}
+}
 .menu-btn{display:none;align-items:center;gap:6px}
 #filtBtn{display:inline-flex;order:30}
 .tray{display:none}
@@ -402,7 +414,7 @@ table.cmp tbody tr:nth-child(even) td{background:#fafbfe}
   <main>
     <div class="bar">
       <button class="btn" id="sbBtn" onclick="toggleSidebar()" title="Show/hide topics">☰</button>
-      <button class="btn" id="homeBtn" onclick="openStart()" title="Open the topic menu">⌂ Menu</button>
+      <button class="btn" id="homeBtn" onclick="openStart()" title="Open the topic menu">⌂<span class="hb-label"> Menu</span></button>
       <div class="now" id="nowLabel"></div>
       <div class="tray" id="tray">
         <div class="fsg" title="Text size"><button class="btn" onclick="setFont(-1)">A−</button><span id="fsLabel" class="fsread">16</span><button class="btn" onclick="setFont(1)">A+</button></div>
@@ -1373,6 +1385,7 @@ function closeStart(){document.getElementById('startOv').classList.remove('show'
    <button class="btn on" data-m="edit">Edit a question</button>
    <button class="btn" data-m="add">Add a question</button>
    <button class="btn" data-m="io">Export / reset</button>
+   <button class="btn" data-m="import">Upload questions</button>
    <button class="btn" style="margin-left:auto" id="pqClose">Close</button>
  </div>
  <div id="pqPaneEdit">
@@ -1390,6 +1403,7 @@ function closeStart(){document.getElementById('startOv').classList.remove('show'
    <input type="file" id="pqImpFile" accept=".json" style="display:none">
    <button class="btn danger" id="pqReset">Reset all edits</button>
  </div>
+ <div id="pqPaneImport" style="display:none"></div>
 </div></div>
 <script>
 (function(){
@@ -1424,7 +1438,9 @@ document.querySelectorAll('#pqEd .tabsE .btn[data-m]').forEach(b=>b.onclick=()=>
   $('#pqPaneEdit').style.display=b.dataset.m==='edit'?'':'none';
   $('#pqPaneAdd').style.display=b.dataset.m==='add'?'':'none';
   $('#pqPaneIO').style.display=b.dataset.m==='io'?'':'none';
+  $('#pqPaneImport').style.display=b.dataset.m==='import'?'':'none';
   if(b.dataset.m==='add') renderAdd();
+  if(b.dataset.m==='import') renderImport();
 });
 /* ---- search & pick ---- */
 $('#pqSearch').oninput=function(){
@@ -1541,6 +1557,96 @@ $('#pqExpAll').onclick=()=>dl('pedsquest_content.json',{topics:TOPICS,sections:S
 $('#pqImpEdits').onclick=()=>$('#pqImpFile').click();
 $('#pqImpFile').onchange=function(){const f=this.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const o=JSON.parse(rd.result);localStorage.setItem(KEYE,JSON.stringify(o));location.reload();}catch(e){alert('Invalid JSON');}};rd.readAsText(f);};
 $('#pqReset').onclick=()=>{ if(confirm('Remove ALL local edits, additions and hidden questions?')){localStorage.removeItem(KEYE);location.reload();} };
+/* ---- upload questions (bulk add from a JSON or CSV file) ---- */
+function renderImport(){
+  const f=$('#pqPaneImport');
+  f.innerHTML=`
+   <p class="muted">Upload a file of new questions to add them all at once, instead of one at a time. Accepts either:</p>
+   <p class="muted">· a <b>JSON</b> array of objects like <code>{"q":"stem…","o":["opt A","opt B","opt C","opt D"],"a":0,"e":"explanation","t":"topicId","s":"Subtopic"}</code> — t/s are optional if you pick defaults below<br>
+   · a <b>CSV</b> with header row <code>topic,subtopic,question,option1,option2,option3,option4,option5,answer,explanation</code> — answer can be a letter (A–E) or the exact option text; topic/subtopic optional if you pick defaults below</p>
+   <label>Default topic (used when a row has none)</label>${topicSel('imT',TOPICS[0][0])}
+   <label>Default subtopic</label>${subSel('imS',TOPICS[0][0],null)}<input type="text" id="imSnew" placeholder="new subtopic name" style="display:none;margin-top:4px">
+   <label>Choose file (.json or .csv)</label>
+   <input type="file" id="imFile" accept=".json,application/json,.csv,text/csv">
+   <div id="imSummary" class="muted" style="margin-top:8px"></div>
+   <div style="margin-top:12px"><button class="btn primary" id="imGo" disabled>Add uploaded questions (reloads app)</button></div>`;
+  $('#imT').onchange=()=>{ $('#imS').outerHTML=subSel('imS',$('#imT').value,null); wireSubI(); };
+  function wireSubI(){ $('#imS').onchange=()=>{ $('#imSnew').style.display=$('#imS').value==='__new__'?'':'none'; }; }
+  wireSubI();
+  let pending=[];
+  $('#imFile').onchange=function(){
+    const file=this.files[0]; if(!file) return;
+    const rd=new FileReader();
+    rd.onload=()=>{
+      try{
+        const isCsv=/\.csv$/i.test(file.name)||file.type.indexOf('csv')>-1;
+        const rows=isCsv?parseCSVQuestions(rd.result):parseJSONQuestions(rd.result);
+        pending=rows.valid;
+        $('#imSummary').innerHTML=pending.length
+          ? `<b>${pending.length}</b> question(s) ready to add.`+(rows.skipped?` ${rows.skipped} row(s) skipped (missing stem or fewer than 2 options).`:'')
+          : 'No valid questions found in this file.';
+        $('#imGo').disabled=pending.length===0;
+      }catch(e){ $('#imSummary').textContent='Could not read this file: '+e.message; $('#imGo').disabled=true; pending=[]; }
+    };
+    rd.readAsText(file);
+  };
+  $('#imGo').onclick=()=>{
+    if(!pending.length) return;
+    const defT=$('#imT').value;
+    let defS=$('#imS').value==='__new__'?$('#imSnew').value.trim():$('#imS').value;
+    pending.forEach(rec=>{
+      const t=rec.t||defT;
+      let s=rec.s||defS||'Imported';
+      const tp=TOPICS.find(x=>x[0]===t);
+      if(tp && !tp[2].includes(s)){ (PQ_OV.subs[t]=PQ_OV.subs[t]||[]).push(s); }
+      const out={t,s,q:rec.q,o:rec.o,a:rec.a,e:rec.e||''};
+      if(rec.r) out.r=rec.r;
+      if(rec.y) out.y=rec.y;
+      PQ_OV.added.push(out);
+    });
+    saveOv();
+  };
+}
+function parseJSONQuestions(text){
+  const data=JSON.parse(text);
+  const arr=Array.isArray(data)?data:(data&&Array.isArray(data.questions)?data.questions:null);
+  if(!arr) throw new Error('expected a JSON array of questions (or {"questions":[...]})');
+  let skipped=0; const valid=[];
+  arr.forEach(it=>{
+    if(!it||typeof it.q!=='string'||!it.q.trim()||!Array.isArray(it.o)||it.o.filter(x=>String(x||'').trim()).length<2||typeof it.a!=='number'){ skipped++; return; }
+    const o=it.o.map(x=>String(x).trim());
+    valid.push({t:it.t?String(it.t).trim():'',s:it.s?String(it.s).trim():'',q:it.q.trim(),o,a:Math.max(0,Math.min(it.a,o.length-1)),e:it.e?String(it.e).trim():'',r:it.r?String(it.r).trim():undefined,y:it.y?+it.y:undefined});
+  });
+  return {valid,skipped};
+}
+function parseCSVQuestions(text){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim().length);
+  if(!lines.length) return {valid:[],skipped:0};
+  const header=splitCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+  let skipped=0; const valid=[];
+  for(let i=1;i<lines.length;i++){
+    const cells=splitCSVLine(lines[i]);
+    const row={}; header.forEach((h,idx)=>{ row[h]=cells[idx]!==undefined?cells[idx].trim():''; });
+    const opts=['option1','option2','option3','option4','option5'].map(k=>row[k]).filter(x=>x);
+    if(!row.question||opts.length<2){ skipped++; continue; }
+    let ansIdx=0; const ans=(row.answer||'').trim();
+    if(/^[a-eA-E]$/.test(ans)){ ansIdx=ans.toUpperCase().charCodeAt(0)-65; }
+    else { const found=opts.findIndex(o=>o.toLowerCase()===ans.toLowerCase()); ansIdx=found>=0?found:0; }
+    if(ansIdx<0||ansIdx>=opts.length) ansIdx=0;
+    valid.push({t:row.topic||'',s:row.subtopic||'',q:row.question,o:opts,a:ansIdx,e:row.explanation||''});
+  }
+  return {valid,skipped};
+}
+function splitCSVLine(line){
+  const out=[]; let cur=''; let inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(inQ){ if(c==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else inQ=false; } else cur+=c; }
+    else { if(c==='"') inQ=true; else if(c===','){ out.push(cur); cur=''; } else cur+=c; }
+  }
+  out.push(cur);
+  return out;
+}
 })();
 </script>
 
