@@ -574,6 +574,24 @@ try{
     }
   }
 }catch(e){}
+// persistent "continue where I left off" position — survives closing the tab/browser, not just editor saves
+let PQ_HAD_LASTPOS=false;
+if(!PQ_RESUME){
+  try{
+    const _lp=JSON.parse(localStorage.getItem(ukey('pq_lastpos_v1'))||'null');
+    if(_lp && typeof _lp==='object' && _lp.topic){
+      PQ_HAD_LASTPOS=true;
+      if(_lp.mode) state.mode=_lp.mode;
+      state.topic=_lp.topic;
+      if('sub' in _lp) state.sub=_lp.sub;
+      if('sec' in _lp) state.sec=_lp.sec;
+      if(typeof _lp.idx==='number') state.idx=_lp.idx;
+    }
+  }catch(e){}
+}
+const PQ_SKIP_START = !!(PQ_RESUME || PQ_HAD_LASTPOS);
+function savePos(){try{localStorage.setItem(ukey('pq_lastpos_v1'),JSON.stringify({mode:state.mode,topic:state.topic,sub:state.sub,sec:state.sec,idx:state.idx}))}catch(e){}}
+if(PQ_SKIP_START){ try{ const _l0=pool(); if(state.idx>=_l0.length) state.idx=Math.max(0,_l0.length-1); }catch(e){} }
 try{const _pa=JSON.parse(localStorage.getItem(ukey('pq_answers_v1'))||'null'); if(_pa&&typeof _pa==='object')state.answered=_pa;}catch(e){}
 function saveAnswers(){try{localStorage.setItem(ukey('pq_answers_v1'),JSON.stringify(state.answered))}catch(e){}}
 const years=[...new Set(Q.map(q=>q.y).filter(Boolean))].sort((a,b)=>b-a);
@@ -932,6 +950,7 @@ function renderTest(head,c){
 // ---------------- render ----------------
 function render(){
   clearAuto();
+  savePos();
   const head=document.getElementById('head'), c=document.getElementById('content'); c.innerHTML='';
   document.getElementById('nowLabel').innerHTML=state.sec?`<b>${esc(state.sec)}</b> · whole section`:`<b>${esc(topicName(state.topic))}</b>${state.sub?' › '+esc(state.sub):''}`;
   document.getElementById('prog').style.display='none';
@@ -1309,7 +1328,7 @@ function setFont(d){fontI=Math.max(0,Math.min(fontSteps.length-1,fontI+d));apply
 })();
 
 buildTOC();buildBar();render();initUser();
-if(PQ_RESUME){
+if(PQ_SKIP_START){
   document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.m===state.mode));
   const hideFilters=(state.mode==='learn'||state.mode==='tables');
   document.getElementById('yearSel').style.display=hideFilters?'none':'';
@@ -1363,7 +1382,7 @@ function closeStart(){document.getElementById('startOv').classList.remove('show'
   document.getElementById('startSecs').innerHTML=hh;
   const su=document.getElementById('startUser');
   if(su)su.innerHTML='👤 Studying as <b>'+esc(PQ_USER||'guest')+'</b><button onclick="switchUser()">Switch user</button><button onclick="installApp()">📲 Install app</button>';
-  if(!PQ_RESUME) openStart();
+  if(!PQ_SKIP_START) openStart();
 })();
 </script>
 <style>
