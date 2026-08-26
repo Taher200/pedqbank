@@ -214,10 +214,20 @@ select,.btn{font:inherit;font-size:13px;border:1px solid var(--line);background:
 .learnsec h3{font-size:1.05em;font-weight:700;color:var(--accent-d);margin:0 2px 12px;padding-top:14px;border-top:2px solid var(--line)}
 .igGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
 .igCard{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
-.igCard img{width:100%;max-height:280px;object-fit:contain;background:#fff;border-bottom:1px solid var(--line)}
+.igImgWrap{position:relative;border-bottom:1px solid var(--line);background:#fff}
+.igImgWrap img{width:100%;max-height:280px;object-fit:contain;display:block;cursor:zoom-in}
+.igEnlargeBtn{position:absolute;bottom:8px;right:8px;background:rgba(15,23,42,.72);color:#fff;border:none;border-radius:8px;padding:6px 10px;font:inherit;font-size:.78em;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px}
+.igEnlargeBtn:hover{background:rgba(15,23,42,.9)}
 .igBody{padding:12px 14px;display:flex;flex-direction:column;gap:8px;flex:1}
 .igTitle{font-weight:700;font-size:.98em;color:var(--ink,#1b2436)}
 .igNote{font-size:.85em;color:var(--muted);line-height:1.5;flex:1}
+.igBtnRow{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+#imgLightbox{position:fixed;inset:0;z-index:9500;background:rgba(8,12,22,.9);display:none;align-items:center;justify-content:center;padding:4vh 3vw;cursor:zoom-out}
+#imgLightbox.show{display:flex}
+#imgLightbox img{max-width:92vw;max-height:92vh;width:auto;height:auto;object-fit:contain;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.6);cursor:default}
+#lightboxClose{position:fixed;top:16px;right:22px;font-size:26px;line-height:1;color:#fff;background:rgba(255,255,255,.12);border:none;border-radius:50%;width:42px;height:42px;cursor:pointer;z-index:9501}
+#lightboxClose:hover{background:rgba(255,255,255,.22)}
+#lightboxCap{position:fixed;bottom:14px;left:0;right:0;text-align:center;color:#e5e9f5;font-size:.85em;opacity:.85;padding:0 20px}
 
 .block{margin:14px 0 2px;border-radius:11px;padding:13px 15px}
 .block .bh .ico{font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.6px;font-weight:700}
@@ -1026,22 +1036,30 @@ function renderTables(head,c){
 
 function renderInfographics(head,c){
   const all=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS:[];
-  head.innerHTML=`<div class="crumb">All topics</div><h2>Infographics</h2><p>${all.length} reference infographic${all.length!==1?'s':''}, grouped by body system — each links to its related topic</p>`;
+  head.innerHTML=`<div class="crumb">All topics</div><h2>Infographics</h2><p>${all.length} reference infographic${all.length!==1?'s':''}, grouped by body system — click any image to enlarge, or jump straight to its related questions</p>`;
   if(!all.length){ c.innerHTML='<div class="empty">No infographics yet.</div>'; return; }
   const bySys={};
-  all.forEach(ig=>{(bySys[ig.sys]=bySys[ig.sys]||[]).push(ig)});
+  all.forEach((ig,i)=>{(bySys[ig.sys]=bySys[ig.sys]||[]).push(i)});
   Object.keys(bySys).sort().forEach(sys=>{
     const sec=document.createElement('div'); sec.className='learnsec';
     sec.innerHTML=`<h3>${esc(sys)}</h3>`;
     const grid=document.createElement('div'); grid.className='igGrid';
-    bySys[sys].forEach(ig=>{
+    bySys[sys].forEach(i=>{
+      const ig=all[i];
       const card=document.createElement('div'); card.className='igCard';
       const linkable = ig.t && TOPICS.some(tp=>tp[0]===ig.t);
-      card.innerHTML=`<img src="${ig.img}" alt="${esc(ig.title)}" loading="lazy">
+      const qCount = linkable ? countTopic(ig.t) : 0;
+      card.innerHTML=`<div class="igImgWrap">
+          <img src="${ig.img}" alt="${esc(ig.title)}" loading="lazy" onclick="openImgLightbox(${i})">
+          <button class="igEnlargeBtn" onclick="openImgLightbox(${i})" title="View full size">🔍 Enlarge</button>
+        </div>
         <div class="igBody">
           <div class="igTitle">${esc(ig.title)}</div>
           <div class="igNote">${esc(ig.note||'')}</div>
-          ${linkable?`<button class="tback" onclick="pickTopic('${ig.t}');setMode('learn')">→ ${esc(topicName(ig.t))}</button>`:''}
+          <div class="igBtnRow">
+            ${linkable&&qCount?`<button class="tback" onclick="infographicToQuestions(${i})">📝 Practice questions (${qCount})</button>`:''}
+            ${linkable?`<button class="tcps" onclick="pickTopic('${ig.t}');setMode('learn')">→ ${esc(topicName(ig.t))}</button>`:''}
+          </div>
         </div>`;
       grid.appendChild(card);
     });
@@ -1049,6 +1067,26 @@ function renderInfographics(head,c){
     c.appendChild(sec);
   });
 }
+function countTopic(t){ return Q.filter(q=>q.t===t).length; }
+// infographic → its topic's best-matching subtopic → jump into quiz on it
+function infographicToQuestions(i){
+  const ig=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS[i]:null; if(!ig) return;
+  state.topic=ig.t; state.sub=subForTable(ig); state.idx=0; stopSpeak();
+  if(state.sub && !countSub(ig.t,state.sub)) state.sub=null;
+  buildTOC(); setMode('quiz'); window.scrollTo({top:0,behavior:'smooth'});
+}
+// ---------------- image lightbox (enlarge infographics to fit window) ----------------
+function openImgLightbox(i){
+  const ig=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS[i]:null; if(!ig) return;
+  const img=document.getElementById('lightboxImg'), ov=document.getElementById('imgLightbox'), cap=document.getElementById('lightboxCap');
+  img.src=ig.img; img.alt=ig.title; cap.textContent=ig.title;
+  ov.classList.add('show');
+}
+function closeImgLightbox(){
+  document.getElementById('imgLightbox').classList.remove('show');
+  document.getElementById('lightboxImg').src='';
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeImgLightbox(); });
 
 // best subtopic for a table title (table → questions)
 function subForTable(tb){
@@ -1421,6 +1459,11 @@ if(PQ_SKIP_START){
 #startClose:hover{border-color:var(--accent);color:var(--accent)}
 @media (max-width:560px){#startCard{padding:18px 16px 22px;border-radius:16px}}
 </style>
+<div id="imgLightbox" onclick="if(event.target===this)closeImgLightbox()">
+ <button id="lightboxClose" onclick="closeImgLightbox()" title="Close">✕</button>
+ <img id="lightboxImg" src="" alt="">
+ <div id="lightboxCap"></div>
+</div>
 <div id="startOv" onclick="if(event.target===this)closeStart()">
  <div id="startCard">
   <button id="startClose" onclick="closeStart()">✕ Close</button>
