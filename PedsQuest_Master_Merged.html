@@ -1036,8 +1036,9 @@ function renderTables(head,c){
 
 function renderInfographics(head,c){
   const all=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS:[];
-  head.innerHTML=`<div class="crumb">All topics</div><h2>Infographics</h2><p>${all.length} reference infographic${all.length!==1?'s':''}, grouped by body system — click any image to enlarge, or jump straight to its related questions</p>`;
-  if(!all.length){ c.innerHTML='<div class="empty">No infographics yet.</div>'; return; }
+  const qImgs=Q.filter(q=>q.img);
+  head.innerHTML=`<div class="crumb">All topics</div><h2>Infographics</h2><p>${all.length} reference infographic${all.length!==1?'s':''}, grouped by body system, plus ${qImgs.length} image${qImgs.length!==1?'s':''} attached to specific questions — click any image to enlarge, or jump straight to its related question(s)</p>`;
+  if(!all.length && !qImgs.length){ c.innerHTML='<div class="empty">No infographics yet.</div>'; return; }
   const bySys={};
   all.forEach((ig,i)=>{(bySys[ig.sys]=bySys[ig.sys]||[]).push(i)});
   Object.keys(bySys).sort().forEach(sys=>{
@@ -1066,8 +1067,49 @@ function renderInfographics(head,c){
     sec.appendChild(grid);
     c.appendChild(sec);
   });
+  if(qImgs.length){
+    QIMG_LIST=qImgs;
+    const byTopic={};
+    qImgs.forEach((q,gi)=>{(byTopic[q.t]=byTopic[q.t]||[]).push(gi)});
+    const qSec=document.createElement('div'); qSec.className='learnsec';
+    qSec.innerHTML=`<h3>📎 Attached to Questions</h3>`;
+    Object.keys(byTopic).sort((a,b)=>topicName(a).localeCompare(topicName(b))).forEach(t=>{
+      const sub=document.createElement('div');
+      sub.innerHTML=`<div style="font-weight:700;font-size:.88em;color:var(--muted);margin:10px 2px 8px">${esc(topicName(t))}</div>`;
+      const grid=document.createElement('div'); grid.className='igGrid';
+      byTopic[t].forEach(gi=>{
+        const q=qImgs[gi];
+        const snippet=q.q.length>140?q.q.slice(0,140)+'…':q.q;
+        const card=document.createElement('div'); card.className='igCard';
+        card.innerHTML=`<div class="igImgWrap">
+            <img src="${q.img}" alt="Question image" loading="lazy" onclick="openQImgLightbox(${gi})">
+            <button class="igEnlargeBtn" onclick="openQImgLightbox(${gi})" title="View full size">🔍 Enlarge</button>
+          </div>
+          <div class="igBody">
+            <div class="igTitle">${esc(q.s||topicName(t))}</div>
+            <div class="igNote">${esc(snippet)}</div>
+            <div class="igBtnRow">
+              <button class="tback" onclick="goToQuestionByGi(${gi})">📝 Go to this question</button>
+            </div>
+          </div>`;
+        grid.appendChild(card);
+      });
+      sub.appendChild(grid);
+      qSec.appendChild(sub);
+    });
+    c.appendChild(qSec);
+  }
 }
+let QIMG_LIST=[];
+function openQImgLightbox(gi){ const q=QIMG_LIST[gi]; if(!q) return; openImgLightboxRaw(q.img, q.s||topicName(q.t)); }
+function goToQuestionByGi(gi){ const q=QIMG_LIST[gi]; if(!q) return; goToQuestion(qid(q)); }
 function countTopic(t){ return Q.filter(q=>q.t===t).length; }
+function goToQuestion(qidStr){
+  const q=Q.find(x=>qid(x)===qidStr); if(!q) return;
+  state.mode='quiz'; state.sec=null; state.topic=q.t; state.sub=q.s; state.reviewIds=null; state.search=''; state.year='all';
+  const l=pool(); const i=l.findIndex(x=>qid(x)===qidStr); state.idx=i>=0?i:0;
+  state.secDone=false; stopSpeak(); stopSlides(); buildTOC(); render(); window.scrollTo({top:0,behavior:'smooth'});
+}
 // infographic → its topic's best-matching subtopic → jump into quiz on it
 function infographicToQuestions(i){
   const ig=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS[i]:null; if(!ig) return;
@@ -1078,8 +1120,12 @@ function infographicToQuestions(i){
 // ---------------- image lightbox (enlarge infographics to fit window) ----------------
 function openImgLightbox(i){
   const ig=(typeof INFOGRAPHICS!=='undefined')?INFOGRAPHICS[i]:null; if(!ig) return;
+  openImgLightboxRaw(ig.img, ig.title);
+}
+function openImgLightboxRaw(src,title){
+  if(!src) return;
   const img=document.getElementById('lightboxImg'), ov=document.getElementById('imgLightbox'), cap=document.getElementById('lightboxCap');
-  img.src=ig.img; img.alt=ig.title; cap.textContent=ig.title;
+  img.src=src; img.alt=title||''; cap.textContent=title||'';
   ov.classList.add('show');
 }
 function closeImgLightbox(){
