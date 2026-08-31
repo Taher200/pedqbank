@@ -21,6 +21,15 @@ input{width:100%;border:1px solid #b9cad8;border-radius:12px;padding:12px 14px;f
 button{border:1px solid #b9cad8;border-radius:999px;background:#fff;color:var(--ink);padding:8px 12px;cursor:pointer;font-weight:650;font-size:.86rem}
 button.active{color:#fff;background:var(--blue);border-color:var(--blue)}
 .jumprow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.attachBackRow{display:none;align-items:center;gap:12px;margin-bottom:2px}
+.attachBackBtn{border:1px solid #b9cad8;border-radius:999px;background:#fff;color:var(--ink);padding:8px 14px;cursor:pointer;font-weight:700;font-size:.86rem;white-space:nowrap}
+.attachBackBtn:hover{background:var(--blue);color:#fff;border-color:var(--blue)}
+#attachFocusLabel{font-weight:800;font-size:1.05rem;color:#073b66}
+body.attach-focus .jumprow,body.attach-focus .filters{display:none}
+body.attach-focus .attachBackRow{display:flex}
+body.attach-focus .grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px}
+body.attach-focus .system-heading{display:none}
+body.attach-focus article a.preview{aspect-ratio:1/.8}
 #sysJump{flex:1;min-width:220px;border:1px solid #b9cad8;border-radius:12px;padding:10px 12px;font-size:.92rem;color:var(--ink);background:#fff}
 .uploadBtn{border-radius:12px;background:var(--accent);border-color:var(--accent);color:#fff;white-space:nowrap}
 .uploadBtn:hover{background:#d9741a}
@@ -102,6 +111,10 @@ body.viewer-open{overflow:hidden}
 </header>
 <div class="toolbar">
 <div class="controls">
+<div class="attachBackRow" id="attachBackRow">
+<button type="button" id="attachBackBtn" class="attachBackBtn">← All systems</button>
+<span id="attachFocusLabel"></span>
+</div>
 <input id="search" type="search" placeholder="Search: syphilis, IEM, seizure, knee pain, sepsis…" aria-label="Search the infographic library">
 <div class="jumprow">
 <select id="sysJump" aria-label="Jump to a system"><option value="">📂 Jump to system / branch…</option></select>
@@ -270,7 +283,7 @@ function paintFilterPills(){
     const b = document.createElement('button');
     b.textContent = cat;
     b.className = cat===active ? 'active' : '';
-    b.onclick = () => { active = cat; sysJump.value = cat==='All' ? '' : cat; paintFilterPills(); render(); };
+    b.onclick = () => setActiveCategory(cat);
     filters.appendChild(b);
   });
 }
@@ -282,16 +295,24 @@ function paintSysJump(){
   });
 }
 const sysJump = document.getElementById('sysJump');
-sysJump.addEventListener('change', () => {
-  const cat = sysJump.value;
-  active = cat || 'All';
+const attachFocusLabel = document.getElementById('attachFocusLabel');
+function setActiveCategory(cat){
+  active = cat && cat!=='All' ? cat : 'All';
+  sysJump.value = active==='All' ? '' : active;
   paintFilterPills();
+  document.body.classList.toggle('attach-focus', ATTACH_MODE && active!=='All');
+  attachFocusLabel.textContent = active==='All' ? '' : ('🖼️ ' + active);
+  search.value = '';
   render();
-  if(cat){
-    const sec = document.getElementById(slug(cat));
+  if(active!=='All'){
+    const sec = document.getElementById(slug(active));
     if(sec) sec.scrollIntoView({behavior:'smooth', block:'start'});
+  } else {
+    window.scrollTo({top:0, behavior:'smooth'});
   }
-});
+}
+sysJump.addEventListener('change', () => setActiveCategory(sysJump.value));
+document.getElementById('attachBackBtn').addEventListener('click', () => setActiveCategory('All'));
 
 // group by category, preserving first-seen order
 const catOrder = [];
@@ -421,10 +442,8 @@ document.getElementById('upSave').addEventListener('click', () => {
     items.push(it);
     if(!filterCats.includes(cat)){ filterCats.push(cat); paintFilterPills(); paintSysJump(); }
     const art = addItemToDom(it, {prepend:true});
-    active = cat; sysJump.value = cat; paintFilterPills();
-    render();
     closeUpModal();
-    document.getElementById(slug(cat)).scrollIntoView({behavior:'smooth', block:'start'});
+    setActiveCategory(cat);
     openViewer(it, art);
   };
   rd.readAsDataURL(f);
