@@ -42,11 +42,24 @@ main{max-width:1320px;margin:auto;padding:22px}
 .system-count{margin-left:auto;color:var(--blue);font-weight:750;font-size:.85rem}
 .system-group[hidden]{display:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:16px}
-article{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 5px 18px rgba(30,60,90,.07);display:flex;flex-direction:column}
+article{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 5px 18px rgba(30,60,90,.07);display:flex;flex-direction:column;transition:opacity .2s ease,box-shadow .2s ease,border-color .2s ease}
 article[hidden]{display:none}
 article a.preview{display:block;aspect-ratio:4/3;background:#eaf1f6;overflow:hidden;cursor:zoom-in}
 article img{width:100%;height:100%;object-fit:cover;object-position:top;transition:transform .2s ease}
 article:hover img{transform:scale(1.025)}
+article.ig-selected{border-color:var(--accent);border-width:2px;box-shadow:0 0 0 3px #fde3c8}
+article.ig-faded{opacity:.32}
+article.ig-faded:hover{opacity:.65}
+.attachPreview{position:sticky;top:0;z-index:6;background:#fff4e0;border-bottom:1px solid #f0c987;padding:12px 22px}
+.attachPreview[hidden]{display:none}
+.attachPreviewInner{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.attachPreviewInner img{width:96px;height:72px;object-fit:cover;border-radius:8px;border:1px solid #f0c987;flex:0 0 auto}
+.attachPreviewBody{flex:1;min-width:220px}
+.attachPreviewSys{font-size:.72rem;text-transform:uppercase;letter-spacing:.4px;color:#7a4a04;font-weight:750}
+.attachPreviewTitle{font-size:.98rem;font-weight:700;color:#4a2e02;margin:2px 0 8px}
+.attachPreviewActions{display:flex;gap:8px;flex-wrap:wrap}
+.attachGoBtn{border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:999px;padding:9px 14px;font-weight:750;cursor:pointer;font-size:.86rem}
+.attachClearBtn{border:1px solid #d8b877;background:#fff;color:#7a4a04;border-radius:999px;padding:9px 14px;font-weight:650;cursor:pointer;font-size:.86rem}
 .body{padding:14px;display:flex;flex-direction:column;flex:1}
 .pill{align-self:flex-start;color:#075566;background:#def3f4;border-radius:999px;padding:4px 8px;font-size:.7rem;font-weight:750;text-transform:uppercase;letter-spacing:.04em}
 h2.card-title{margin:10px 0 6px;font-size:1rem;line-height:1.25}
@@ -95,6 +108,19 @@ body.viewer-open{overflow:hidden}
 <button type="button" id="uploadBtn" class="uploadBtn">➕ Upload your own infographic</button>
 </div>
 <div class="filters" id="filters"></div>
+</div>
+</div>
+<div class="attachPreview" id="attachPreview" hidden>
+<div class="wrap attachPreviewInner">
+<img id="attachPreviewImg" alt="">
+<div class="attachPreviewBody">
+<div class="attachPreviewSys" id="attachPreviewSys"></div>
+<div class="attachPreviewTitle" id="attachPreviewTitle"></div>
+<div class="attachPreviewActions">
+<button type="button" id="attachPreviewGo" class="attachGoBtn">📎 Attach this image to the question</button>
+<button type="button" id="attachPreviewClear" class="attachClearBtn">✕ Clear selection</button>
+</div>
+</div>
 </div>
 </div>
 <main>
@@ -169,13 +195,42 @@ if(ATTACH_MODE){
 viewerAttachBtn.addEventListener('click', e => {
   e.preventDefault();
   if(!currentItem) return;
+  sendAttach(currentItem[2]);
+});
+function sendAttach(img){
   if(window.opener && !window.opener.closed){
-    window.opener.postMessage({type:'pq_attach_img', img: currentItem[2]}, '*');
+    window.opener.postMessage({type:'pq_attach_img', img: img}, '*');
     window.close();
   } else {
     alert('Open this Library from a question\'s 📎 attachment panel in the QBank to enable one-click attach.');
   }
-});
+}
+// ---------------- attach-mode: select a thumbnail without leaving the grid ----------------
+let attachSelectedItem = null;
+let attachSelectedArt = null;
+const attachPreview = document.getElementById('attachPreview');
+function selectForAttach(it, art){
+  attachSelectedItem = it;
+  attachSelectedArt = art;
+  document.querySelectorAll('article').forEach(a => {
+    a.classList.toggle('ig-selected', a===art);
+    a.classList.toggle('ig-faded', a!==art);
+  });
+  document.getElementById('attachPreviewImg').src = it[2];
+  document.getElementById('attachPreviewSys').textContent = it[0];
+  document.getElementById('attachPreviewTitle').textContent = it[1];
+  attachPreview.hidden = false;
+  attachPreview.scrollIntoView({behavior:'smooth', block:'start'});
+}
+function clearAttachSelection(){
+  attachSelectedItem = null; attachSelectedArt = null;
+  attachPreview.hidden = true;
+  document.querySelectorAll('article').forEach(a => a.classList.remove('ig-selected','ig-faded'));
+}
+if(ATTACH_MODE){
+  document.getElementById('attachPreviewGo').addEventListener('click', () => { if(attachSelectedItem) sendAttach(attachSelectedItem[2]); });
+  document.getElementById('attachPreviewClear').addEventListener('click', clearAttachSelection);
+}
 
 function slug(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); }
 
@@ -257,9 +312,11 @@ function renderCard(it){
       <a class="open" href="#">Open full-resolution →</a>
       ${qidv?`<a class="qlink" href="PedsQuest_Master_Merged.html#q=${encodeURIComponent(qidv)}">📝 Related question in QBank →</a>`:''}
     </div>`;
-  art.querySelectorAll('a.preview, a.open').forEach(link => {
-    link.addEventListener('click', e => { e.preventDefault(); openViewer(it, link); });
+  art.querySelector('a.preview').addEventListener('click', e => {
+    e.preventDefault();
+    if(ATTACH_MODE) selectForAttach(it, art); else openViewer(it, art);
   });
+  art.querySelector('a.open').addEventListener('click', e => { e.preventDefault(); openViewer(it, art); });
   return art;
 }
 function ensureSection(cat){
@@ -291,6 +348,7 @@ items.forEach(it => addItemToDom(it));
 paintFilterPills();
 paintSysJump();
 function render(){
+  if(ATTACH_MODE) clearAttachSelection();
   const q = search.value.trim().toLowerCase();
   let visible = 0;
   groups.forEach(g => {
