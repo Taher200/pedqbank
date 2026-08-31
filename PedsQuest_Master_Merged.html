@@ -159,12 +159,16 @@ select,.btn{font:inherit;font-size:13px;border:1px solid var(--line);background:
 #igPickCard h3{margin:0 0 8px}
 #igPickSys{width:100%;font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;margin-bottom:8px;background:#fff}
 #igPickSearch{width:100%;font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;margin-bottom:10px}
-#igPickPreview img{width:100%;max-height:44vh;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#f4f7fb}
+#igPickPreview{border:1px solid var(--accent);background:var(--accent-l);border-radius:12px;padding:12px;margin-bottom:12px}
+#igPickPreview img{width:100%;max-height:34vh;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#f4f7fb}
 #igPickPreview .igps{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
 #igPickGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:50vh;overflow:auto;padding:2px}
-.igPickItem{border:1px solid var(--line);border-radius:10px;padding:6px;cursor:pointer;text-align:left;background:#fff;font:inherit}
+.igPickItem{border:1px solid var(--line);border-radius:10px;padding:6px;cursor:pointer;text-align:left;background:#fff;font:inherit;transition:opacity .2s ease,box-shadow .2s ease,border-color .2s ease}
 .igPickItem:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(15,23,42,.12)}
 .igPickItem img{width:100%;height:90px;object-fit:cover;border-radius:6px;display:block;margin-bottom:6px}
+.igPickItem.selected{border-color:var(--accent);border-width:2px;box-shadow:0 0 0 3px var(--accent-l)}
+.igPickItem.faded{opacity:.32}
+.igPickItem.faded:hover{opacity:.6}
 .igPickItem .igpt{font-size:11.5px;font-weight:600;line-height:1.3}
 .igPickItem .igps{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
 #igPickEmpty{color:var(--muted);font-size:13px;padding:14px 0}
@@ -892,6 +896,7 @@ function paintIgSysOptions(){
   sel.innerHTML='<option value="">📂 All systems / branches…</option>'+systems.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
 }
 function paintIgPick(query){
+  igPickShowGrid();
   const host=document.getElementById('igPickGrid');
   const empty=document.getElementById('igPickEmpty');
   const qq=(query||'').trim().toLowerCase();
@@ -906,27 +911,28 @@ function paintIgPick(query){
   list.forEach(ig=>{
     const b=document.createElement('button'); b.type='button'; b.className='igPickItem';
     b.innerHTML='<img src="'+ig.img+'" alt="'+esc(ig.title)+'"><div class="igps">'+esc(ig.sys)+'</div><div class="igpt">'+esc(ig.title)+'</div>';
-    b.onclick=()=>{ igPickShowPreview(ig); };
+    b.onclick=()=>{ igPickShowPreview(ig,b); };
     host.appendChild(b);
   });
 }
-function igPickShowPreview(ig){
+function igPickShowPreview(ig,btn){
   igPickPreviewImg=ig.img;
-  document.getElementById('igPickGrid').style.display='none';
-  document.getElementById('igPickSearch').style.display='none';
-  document.getElementById('igPickSys').style.display='none';
+  const host=document.getElementById('igPickGrid');
+  [...host.children].forEach(el=>{
+    el.classList.toggle('selected', el===btn);
+    el.classList.toggle('faded', el!==btn);
+  });
   const pv=document.getElementById('igPickPreview');
   pv.style.display='block';
   pv.querySelector('img').src=ig.img;
   pv.querySelector('.igps').textContent=ig.sys;
   pv.querySelector('.igpt').textContent=ig.title;
+  pv.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function igPickShowGrid(){
   igPickPreviewImg=null;
   document.getElementById('igPickPreview').style.display='none';
-  document.getElementById('igPickGrid').style.display='';
-  document.getElementById('igPickSearch').style.display='';
-  document.getElementById('igPickSys').style.display='';
+  document.querySelectorAll('#igPickGrid .igPickItem').forEach(el=>{ el.classList.remove('selected','faded'); });
 }
 function igPickConfirmAttach(){
   if(!igPickPreviewImg)return;
@@ -1735,17 +1741,17 @@ function closeStart(){document.getElementById('startOv').classList.remove('show'
   <h3>🖼️ Attach from Infographics Library</h3>
   <select id="igPickSys" onchange="paintIgPick(document.getElementById('igPickSearch').value)"></select>
   <input type="text" id="igPickSearch" placeholder="Search by title, system or keyword…" oninput="paintIgPick(this.value)">
-  <div id="igPickGrid"></div>
-  <div id="igPickEmpty" style="display:none">No infographics match that search.</div>
   <div id="igPickPreview" style="display:none">
     <div class="igps"></div>
     <div class="igpt" style="font-size:15px;margin-bottom:8px"></div>
     <img alt="preview">
     <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-      <button type="button" class="mbtn" onclick="igPickConfirmAttach()">✓ Attach this image</button>
-      <button type="button" class="mbtn alt" onclick="igPickShowGrid()">← Back to results</button>
+      <button type="button" class="mbtn" onclick="igPickConfirmAttach()">✓ Link this image to the question</button>
+      <button type="button" class="mbtn alt" onclick="igPickShowGrid()">✕ Clear selection</button>
     </div>
   </div>
+  <div id="igPickGrid"></div>
+  <div id="igPickEmpty" style="display:none">No infographics match that search.</div>
   <div style="margin-top:14px;text-align:right"><button style="border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer" onclick="closeIgPick()">Cancel</button></div>
  </div>
 </div>
