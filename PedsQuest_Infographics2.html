@@ -89,6 +89,7 @@ body.viewer-open{overflow:hidden}
 <a class="viewer-home" id="viewerHome" href="#">← Close</a>
 <div class="viewer-title" id="viewerTitle"></div>
 <div class="viewer-actions">
+<a id="viewerAttachBtn" href="#" hidden>📎 Attach to question</a>
 <a id="viewerQLink" href="#" hidden>📝 Related question →</a>
 </div>
 </div>
@@ -109,14 +110,34 @@ const viewerImage = document.getElementById('viewerImage');
 const viewerTitle = document.getElementById('viewerTitle');
 const viewerHome = document.getElementById('viewerHome');
 const viewerQLink = document.getElementById('viewerQLink');
+const viewerAttachBtn = document.getElementById('viewerAttachBtn');
 const viewerStage = document.getElementById('viewerStage');
 let active = 'All';
 let lastFocus = null;
+let currentItem = null;
+const ATTACH_MODE = new URLSearchParams(location.search).get('attach')==='1';
+if(ATTACH_MODE){
+  const banner = document.createElement('div');
+  banner.style.cssText = 'max-width:1320px;margin:12px auto 0;padding:10px 16px;background:#fff4e0;border:1px solid #f0c987;border-radius:12px;font-size:.88rem;color:#7a4a04';
+  banner.textContent = '📎 Attach mode — open any infographic and click "Attach to question" to send it back to your QBank question.';
+  document.getElementById('sections').before(banner);
+}
+viewerAttachBtn.addEventListener('click', e => {
+  e.preventDefault();
+  if(!currentItem) return;
+  if(window.opener && !window.opener.closed){
+    window.opener.postMessage({type:'pq_attach_img', img: currentItem[2]}, '*');
+    window.close();
+  } else {
+    alert('Open this Library from a question\'s 📎 attachment panel in the QBank to enable one-click attach.');
+  }
+});
 
 function slug(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''); }
 
 function openViewer(item, trigger){
   lastFocus = trigger || document.activeElement;
+  currentItem = item;
   viewerTitle.textContent = item[1];
   viewerImage.src = item[2];
   viewerImage.alt = item[1];
@@ -126,6 +147,7 @@ function openViewer(item, trigger){
   } else {
     viewerQLink.hidden = true;
   }
+  viewerAttachBtn.hidden = !ATTACH_MODE;
   viewerStage.scrollTop = 0;
   viewer.setAttribute('aria-hidden','false');
   document.body.classList.add('viewer-open');
