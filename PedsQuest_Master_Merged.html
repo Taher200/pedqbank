@@ -157,7 +157,10 @@ select,.btn{font:inherit;font-size:13px;border:1px solid var(--line);background:
 #igPick.show{display:flex}
 #igPickCard{background:#fff;border-radius:16px;max-width:820px;width:100%;padding:20px 22px;box-shadow:0 20px 60px rgba(15,23,42,.35)}
 #igPickCard h3{margin:0 0 8px}
+#igPickSys{width:100%;font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;margin-bottom:8px;background:#fff}
 #igPickSearch{width:100%;font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box;margin-bottom:10px}
+#igPickPreview img{width:100%;max-height:44vh;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#f4f7fb}
+#igPickPreview .igps{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
 #igPickGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:50vh;overflow:auto;padding:2px}
 .igPickItem{border:1px solid var(--line);border-radius:10px;padding:6px;cursor:pointer;text-align:left;background:#fff;font:inherit}
 .igPickItem:hover{border-color:var(--accent);box-shadow:0 4px 14px rgba(15,23,42,.12)}
@@ -872,18 +875,29 @@ function attachImgToMatQ(dataUri){
   if(document.getElementById('matEd').classList.contains('show')) paintMats();
 }
 // ---------------- infographics picker (attach from library) ----------------
+let igPickPreviewImg=null;
 function openIgPick(){
   if(!matQ)return;
   document.getElementById('igPickSearch').value='';
+  paintIgSysOptions();
+  document.getElementById('igPickSys').value='';
+  igPickShowGrid();
   paintIgPick('');
   document.getElementById('igPick').classList.add('show');
 }
-function closeIgPick(){ document.getElementById('igPick').classList.remove('show'); }
+function closeIgPick(){ document.getElementById('igPick').classList.remove('show'); igPickShowGrid(); }
+function paintIgSysOptions(){
+  const sel=document.getElementById('igPickSys');
+  const systems=[...new Set((typeof INFOGRAPHICS!=='undefined'?INFOGRAPHICS:[]).map(ig=>ig.sys))].sort();
+  sel.innerHTML='<option value="">📂 All systems / branches…</option>'+systems.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');
+}
 function paintIgPick(query){
   const host=document.getElementById('igPickGrid');
   const empty=document.getElementById('igPickEmpty');
   const qq=(query||'').trim().toLowerCase();
+  const sysFilter=document.getElementById('igPickSys').value;
   const list=(typeof INFOGRAPHICS!=='undefined'?INFOGRAPHICS:[]).filter(ig=>{
+    if(sysFilter && ig.sys!==sysFilter)return false;
     if(!qq)return true;
     return (ig.title+' '+ig.sys+' '+(ig.note||'')).toLowerCase().indexOf(qq)>-1;
   });
@@ -892,9 +906,32 @@ function paintIgPick(query){
   list.forEach(ig=>{
     const b=document.createElement('button'); b.type='button'; b.className='igPickItem';
     b.innerHTML='<img src="'+ig.img+'" alt="'+esc(ig.title)+'"><div class="igps">'+esc(ig.sys)+'</div><div class="igpt">'+esc(ig.title)+'</div>';
-    b.onclick=()=>{ attachImgToMatQ(ig.img); closeIgPick(); };
+    b.onclick=()=>{ igPickShowPreview(ig); };
     host.appendChild(b);
   });
+}
+function igPickShowPreview(ig){
+  igPickPreviewImg=ig.img;
+  document.getElementById('igPickGrid').style.display='none';
+  document.getElementById('igPickSearch').style.display='none';
+  document.getElementById('igPickSys').style.display='none';
+  const pv=document.getElementById('igPickPreview');
+  pv.style.display='block';
+  pv.querySelector('img').src=ig.img;
+  pv.querySelector('.igps').textContent=ig.sys;
+  pv.querySelector('.igpt').textContent=ig.title;
+}
+function igPickShowGrid(){
+  igPickPreviewImg=null;
+  document.getElementById('igPickPreview').style.display='none';
+  document.getElementById('igPickGrid').style.display='';
+  document.getElementById('igPickSearch').style.display='';
+  document.getElementById('igPickSys').style.display='';
+}
+function igPickConfirmAttach(){
+  if(!igPickPreviewImg)return;
+  attachImgToMatQ(igPickPreviewImg);
+  closeIgPick();
 }
 function openCompanionAttachPicker(){
   if(!matQ)return;
@@ -1696,9 +1733,19 @@ function closeStart(){document.getElementById('startOv').classList.remove('show'
 <div id="igPick" onclick="if(event.target===this)closeIgPick()">
  <div id="igPickCard">
   <h3>🖼️ Attach from Infographics Library</h3>
+  <select id="igPickSys" onchange="paintIgPick(document.getElementById('igPickSearch').value)"></select>
   <input type="text" id="igPickSearch" placeholder="Search by title, system or keyword…" oninput="paintIgPick(this.value)">
   <div id="igPickGrid"></div>
   <div id="igPickEmpty" style="display:none">No infographics match that search.</div>
+  <div id="igPickPreview" style="display:none">
+    <div class="igps"></div>
+    <div class="igpt" style="font-size:15px;margin-bottom:8px"></div>
+    <img alt="preview">
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="mbtn" onclick="igPickConfirmAttach()">✓ Attach this image</button>
+      <button type="button" class="mbtn alt" onclick="igPickShowGrid()">← Back to results</button>
+    </div>
+  </div>
   <div style="margin-top:14px;text-align:right"><button style="border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer" onclick="closeIgPick()">Cancel</button></div>
  </div>
 </div>
