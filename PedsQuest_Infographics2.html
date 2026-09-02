@@ -300,7 +300,7 @@ function setActiveCategory(cat){
   active = cat && cat!=='All' ? cat : 'All';
   sysJump.value = active==='All' ? '' : active;
   paintFilterPills();
-  document.body.classList.toggle('attach-focus', ATTACH_MODE && active!=='All');
+  document.body.classList.toggle('attach-focus', active!=='All');
   attachFocusLabel.textContent = active==='All' ? '' : ('🖼️ ' + active);
   search.value = '';
   render();
